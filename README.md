@@ -6,6 +6,7 @@ A high-scale telemetry ingestion system built with **NestJS**, **PostgreSQL**, a
 
 ## Table of Contents
 
+- [Quick Setup Guide](#quick-setup-guide)
 - [Architecture](#architecture)
 - [Data Flow](#data-flow)
 - [Hot vs Cold Storage](#hot-vs-cold-storage)
@@ -18,6 +19,129 @@ A high-scale telemetry ingestion system built with **NestJS**, **PostgreSQL**, a
 - [Running with Docker](#running-with-docker)
 - [Project Structure](#project-structure)
 - [Future Improvements](#future-improvements)
+
+---
+
+## Quick Setup Guide
+
+Get started with the Energy Ingestion Engine in 5 simple steps:
+
+### 1. Check if Docker is Running
+```bash
+# Check Docker status
+docker info > /dev/null 2>&1 && echo "Docker is running" || echo "Docker is not running - please start Docker Desktop"
+```
+
+**If Docker is not running:**
+- **Linux:** `sudo systemctl start docker`
+- **macOS/Windows:** Open Docker Desktop application
+
+### 2. Setup Environment and Start Database
+```bash
+# Copy environment configuration
+cp .env.example .env
+
+# Build and start database services (PostgreSQL, PgBouncer)
+docker compose up --build -d
+
+# Verify all containers are running
+docker compose ps
+```
+
+This starts PostgreSQL with password authentication from your `.env` file.
+
+### 3. Load Sample Data
+
+**Option 1: Load seed data file (Recommended - loads 480+ sample records)**
+```bash
+# Load the seed data file with 10 vehicles, 10 meters, and 24 hours of history
+docker exec -i energy_postgres psql -U postgres -d energy_engine < database/seed-data.sql
+```
+
+This will insert:
+- 10 vehicles with current status
+- 10 meters with current status
+- 10 vehicle-meter links
+- 240 historical vehicle readings (10 vehicles × 24 hours)
+- 240 historical meter readings (10 meters × 24 hours)
+
+**Option 2: Add data via API (after starting the app)**
+```bash
+# Add Vehicle Telemetry
+curl -X POST http://localhost:3000/v1/telemetry \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "VEHICLE",
+    "payload": {
+      "vehicleId": "V001",
+      "soc": 72.50,
+      "kwhDeliveredDc": 3.21,
+      "batteryTemp": 31.40,
+      "timestamp": "2026-02-13T10:30:00Z"
+    }
+  }'
+
+# Add Meter Telemetry
+curl -X POST http://localhost:3000/v1/telemetry \
+  -H "Content-Type: application/json" \
+  -d '{
+    "type": "METER",
+    "payload": {
+      "meterId": "M042",
+      "kwhConsumedAc": 4.15,
+      "voltage": 232.10,
+      "timestamp": "2026-02-13T10:30:00Z"
+    }
+  }'
+```
+
+**Option 3: Insert data manually via PostgreSQL**
+```bash
+# Connect to PostgreSQL
+docker exec -it energy_postgres psql -U postgres -d energy_engine
+
+# Insert sample vehicle data
+INSERT INTO vehicle_current_status (vehicle_id, soc, kwh_delivered_dc, battery_temp, last_seen_at, updated_at)
+VALUES ('V001', 72.50, 3.21, 31.40, NOW(), NOW());
+
+# Insert sample meter data
+INSERT INTO meter_current_status (meter_id, kwh_consumed_ac, voltage, last_seen_at, updated_at)
+VALUES ('M042', 4.15, 232.10, NOW(), NOW());
+```
+
+### 4. Start the Application
+```bash
+# Install dependencies (first time only)
+npm install
+
+# Run the application in development mode
+npm run start:dev
+```
+
+The application will start and connect to the PostgreSQL database running in Docker.
+
+### 5. Access Swagger UI
+Open your browser and navigate to:
+```
+http://localhost:3000/api
+```
+
+This provides an interactive API documentation interface where you can:
+- Test all endpoints
+- View request/response schemas
+- Execute API calls directly from the browser
+
+**Verify the setup:**
+```bash
+# Check buffer status
+curl http://localhost:3000/v1/telemetry/buffer-status
+
+# Get live vehicle status
+curl http://localhost:3000/v1/analytics/live/VEHICLE/V001
+
+# Get live meter status
+curl http://localhost:3000/v1/analytics/live/METER/M042
+```
 
 ---
 
