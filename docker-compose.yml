@@ -1,0 +1,153 @@
+# =============================================================================
+# DOCKER COMPOSE — Energy Ingestion Engine
+# =============================================================================
+#
+# Architecture:
+#
+#   ┌──────────┐     ┌──────────┐     ┌──────────────┐     ┌──────────┐
+#   │ app:3000 │────►│ pgbouncer│────►│ postgres:5432│     │ app:3000 │
+#   │ (NestJS) │     │   :6432  │     │  (Primary)   │     │ (replica)│
+#   └──────────┘     └──────────┘     └──────────────┘     └──────────┘
+#        ▲                                   │
+#        │                              volume: pgdata
+#   Load Balancer
+#   (external)
+#
+# Usage:
+#   Development:  docker compose up
+#   Production:   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+#   Scale app:    docker compose up -d --scale app=3
+#
+# =============================================================================
+
+services:
+
+  # ── PostgreSQL ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16-alpine
+    container_name: energy_postgres
+    restart: unless-stopped
+
+    environment:
+      POSTGRES_USER: ${DB_USERNAME:-postgres}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:-postgres}
+      POSTGRES_DB: ${DB_NAME:-energy_engine}
+
+    # Mount custom tuning config and init script
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./docker/postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./database/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+      - ./docker/postgres/init.sh:/docker-entrypoint-initdb.d/init.sh:ro
+
+    # Use our tuned config instead of defaults
+    command: postgres -c config_file=/etc/postgresql/postgresql.conf
+
+    ports:
+      - "${DB_EXTERNAL_PORT:-5432}:5432"
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USERNAME:-postgres} -d ${DB_NAME:-energy_engine}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 15s
+
+    # Resource limits — adjust for your host
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+        reservations:
+          cpus: "1"
+          memory: 512M
+
+    networks:
+      - backend
+
+  # ── PgBouncer (Connection Pooler) ──────────────────────────────────────────
+  pgbouncer:
+    image: edoburu/pgbouncer:latest
+    container_name: energy_pgbouncer
+    restart: unless-stopped
+
+    volumes:
+      - ./docker/pgbouncer/pgbouncer.ini:/etc/pgbouncer/pgbouncer.ini:ro
+      - ./docker/pgbouncer/userlist.txt:/etc/pgbouncer/userlist.txt:ro
+
+    ports:
+      - "${PGBOUNCER_PORT:-6432}:6432"
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h localhost -p 6432 -U ${DB_USERNAME:-postgres}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+    deploy:
+      resources:
+        limits:
+          cpus: "1"
+          memory: 512M
+
+    networks:
+      - backend
+
+  # ── NestJS Application ─────────────────────────────────────────────────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: production
+    container_name: energy_app
+    restart: unless-stopped
+
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+
+      # Connect to PgBouncer, NOT directly to Postgres.
+      # PgBouncer multiplexes app connections into a smaller server pool.
+      DB_HOST: pgbouncer
+      DB_PORT: 6432
+      DB_USERNAME: ${DB_USERNAME:-postgres}
+      DB_PASSWORD: ${DB_PASSWORD:-postgres}
+      DB_NAME: ${DB_NAME:-energy_engine}
+
+      # Ingestion buffer tuning
+      BUFFER_FLUSH_SIZE: ${BUFFER_FLUSH_SIZE:-500}
+      BUFFER_FLUSH_INTERVAL_MS: ${BUFFER_FLUSH_INTERVAL_MS:-2000}
+
+    ports:
+      - "${APP_PORT:-3000}:3000"
+
+    depends_on:
+      pgbouncer:
+        condition: service_healthy
+
+    # Node.js memory limit — match container limit minus overhead
+    # V8 heap should be ~75% of container memory limit
+    deploy:
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+
+    networks:
+      - backend
+
+volumes:
+  pgdata:
+    driver: local
+
+networks:
+  backend:
+    driver: bridge

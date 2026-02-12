@@ -1,0 +1,66 @@
+# =============================================================================
+# PRODUCTION OVERRIDE — docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d
+# =============================================================================
+# Adds:
+#   - Horizontal scaling for the app (remove container_name, allow replicas)
+#   - Stricter resource limits
+#   - Log rotation
+#   - Restart policies
+#
+# Scale command:
+#   docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --scale app=5
+#
+# =============================================================================
+
+services:
+
+  app:
+    # Remove fixed container name to allow multiple replicas
+    container_name: ""
+
+    # Override port mapping — use dynamic ports when scaling.
+    # A reverse proxy (Nginx/Traefik) load-balances across replicas.
+    ports: []
+
+    environment:
+      # Increase V8 heap for production workloads
+      NODE_OPTIONS: "--max-old-space-size=1536"
+
+      # Larger flush size in production — more records per batch
+      BUFFER_FLUSH_SIZE: 1000
+      BUFFER_FLUSH_INTERVAL_MS: 1000
+
+    deploy:
+      replicas: 3
+      resources:
+        limits:
+          cpus: "2"
+          memory: 2G
+        reservations:
+          cpus: "1"
+          memory: 1G
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 10
+        window: 60s
+
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "50m"
+        max-file: "5"
+
+  postgres:
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "100m"
+        max-file: "10"
+
+  pgbouncer:
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "20m"
+        max-file: "3"
