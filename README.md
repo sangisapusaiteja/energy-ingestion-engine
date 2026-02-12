@@ -778,21 +778,47 @@ GET /v1/analytics/performance/V001
 ### Quick start (development)
 
 ```bash
-# Clone and configure
+# 1. Clone and configure
 cp .env.example .env
 
-# Start all services
-docker compose up -d
+# 2. Build and start all services
+docker compose up --build -d
 
-# Verify health
+# 3. Verify all containers are running
 docker compose ps
+
+# 4. Open Swagger UI in browser
+#    http://localhost:3000/api
+
+# 5. Quick health check via terminal
 curl http://localhost:3000/v1/telemetry/buffer-status
 ```
 
 This starts:
 - **postgres:5432** — PostgreSQL 16 with tuned config, schema auto-applied on first boot
 - **pgbouncer:6432** — Connection pooler (transaction mode, 40 server connections)
-- **app:3000** — NestJS application (single replica, connects through PgBouncer)
+- **app:3000** — NestJS application with Swagger UI at `/api`
+
+### Useful commands
+
+```bash
+docker compose ps                # Check container status
+docker compose logs app -f       # Follow app logs
+docker compose logs postgres -f  # Follow DB logs
+docker compose down              # Stop all services
+docker compose down -v           # Stop and wipe DB data
+docker compose up --build -d     # Rebuild after code changes
+```
+
+### Connect to the database
+
+```bash
+# Via psql (through PgBouncer)
+psql -h localhost -p 6432 -U postgres -d energy_db
+
+# Direct to Postgres (bypassing PgBouncer)
+psql -h localhost -p 5433 -U postgres -d energy_db
+```
 
 ### Production deployment
 
